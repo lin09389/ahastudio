@@ -106,29 +106,46 @@ function isEnvAllowed(name: string): boolean {
   return false;
 }
 
+function sanitizedAllowlistedEnv(isAllowed: (name: string) => boolean): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (typeof v !== 'string' || !isAllowed(k)) continue;
+    // Strip dangerous NODE_OPTIONS flags (--inspect*, --require, -r) to
+    // prevent debug port exposure and arbitrary code loading via subprocess.
+    if (k === 'NODE_OPTIONS') {
+      const cleaned = v
+        .replace(/--inspect[^\s]*/g, '')
+        .replace(/--require[^\s]*/g, '')
+        .replace(/(?:^|\s)-r\s+[^\s]+/g, ' ')
+        .trim();
+      if (cleaned) out[k] = cleaned;
+      continue;
+    }
+    out[k] = v;
+  }
+  return out;
+}
+
+const CODEX_ENV_PREFIX_ALLOWLIST: readonly string[] = ['OPENAI_', 'CODEX_', 'XDG_'];
+
+function isCodexEnvAllowed(name: string): boolean {
+  if (ENV_ALLOWLIST.has(name) || name.toUpperCase() === 'PATH') return true;
+  for (const pfx of CODEX_ENV_PREFIX_ALLOWLIST) {
+    if (name.startsWith(pfx)) return true;
+  }
+  return false;
+}
+
+/** Environment for the Codex app-server: provider credentials yes, unrelated ambient secrets no. */
+export function mergedCodexSubprocessEnv(): NodeJS.ProcessEnv {
+  return sanitizedAllowlistedEnv(isCodexEnvAllowed);
+}
+
 export function mergedSubprocessEnv(): NodeJS.ProcessEnv {
   const claudeEnv = loadClaudeEnv();
-  const out: NodeJS.ProcessEnv = {};
-  // 1. Inherit only allowlisted vars from the Electron main process env.
-  for (const [k, v] of Object.entries(process.env)) {
-    if (typeof v === 'string' && isEnvAllowed(k)) {
-      // Strip dangerous NODE_OPTIONS flags (--inspect*, --require, -r) to
-      // prevent debug port exposure and arbitrary code loading via subprocess.
-      if (k === 'NODE_OPTIONS') {
-        const cleaned = v
-          .replace(/--inspect[^\s]*/g, '')
-          .replace(/--require[^\s]*/g, '')
-          .replace(/(?:^|\s)-r\s+[^\s]+/g, ' ')
-          .trim();
-        if (cleaned) out[k] = cleaned;
-        continue;
-      }
-      out[k] = v;
-    }
-  }
-  // 2. Overlay ~/.claude/settings.json env. User explicitly authored that
-  //    file, so we trust every key in it (and let it override allowlisted
-  //    process env where they collide).
+  const out = sanitizedAllowlistedEnv(isEnvAllowed);
+  // Overlay ~/.claude/settings.json env. User explicitly authored that file,
+  // so we trust every key in it (and let it override allowlisted process env).
   for (const [k, v] of Object.entries(claudeEnv)) {
     if (typeof v === 'string' && v.length > 0) out[k] = v;
   }

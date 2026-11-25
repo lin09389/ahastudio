@@ -11,7 +11,7 @@ export class WorkspaceStateStore {
   private writeGeneration = 0;
 
   constructor(private readonly resolvePath: () => string) {
-    this.writer = new AtomicSnapshotWriter(resolvePath, { skipUnchanged: true });
+    this.writer = new AtomicSnapshotWriter(resolvePath, { skipUnchanged: true, fileMode: 0o600, directoryMode: 0o700 });
   }
 
   read(): WorkspaceSnapshotData | null {

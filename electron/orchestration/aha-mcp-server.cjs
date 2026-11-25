@@ -30,8 +30,31 @@ const BOARD_POST_KIND_ENUM = [
   'stall',
 ];
 
+function readCredentialFile() {
+  const file = process.env.AHA_CREDENTIAL_FILE;
+  if (!file) return {};
+  try {
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return {};
+    const out = {};
+    for (const [key, value] of Object.entries(data)) {
+      if (/^AHA_[A-Z0-9_]+$/.test(key) && typeof value === 'string') out[key] = value;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+const credentialFileEnv = readCredentialFile();
+
+function envValue(name) {
+  return process.env[name] || credentialFileEnv[name] || '';
+}
+
+
 function readEndpointFile() {
-  const file = process.env.AHA_AGENT_HOOK_ENDPOINT_FILE;
+  const file = envValue('AHA_AGENT_HOOK_ENDPOINT_FILE');
   if (!file) return null;
   try {
     const data = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -47,19 +70,19 @@ function readEndpointFile() {
 function resolveOrchestrationEndpoint() {
   const fromFile = readEndpointFile();
   if (fromFile) return fromFile;
-  const token = process.env.AHA_AGENT_HOOK_TOKEN || '';
-  if (process.env.AHA_ORCHESTRATION_URL) {
-    return { baseUrl: process.env.AHA_ORCHESTRATION_URL.replace(/\/+$/, ''), token };
+  const token = envValue('AHA_AGENT_HOOK_TOKEN');
+  if (envValue('AHA_ORCHESTRATION_URL')) {
+    return { baseUrl: envValue('AHA_ORCHESTRATION_URL').replace(/\/+$/, ''), token };
   }
-  if (process.env.AHA_AGENT_HOOK_URL) {
+  if (envValue('AHA_AGENT_HOOK_URL')) {
     return {
-      baseUrl: process.env.AHA_AGENT_HOOK_URL.replace(/\/hook\/?$/, '') + '/orchestration',
+      baseUrl: envValue('AHA_AGENT_HOOK_URL').replace(/\/hook\/?$/, '') + '/orchestration',
       token,
     };
   }
-  if (process.env.AHA_AGENT_HOOK_PORT) {
+  if (envValue('AHA_AGENT_HOOK_PORT')) {
     return {
-      baseUrl: `http://127.0.0.1:${process.env.AHA_AGENT_HOOK_PORT}/orchestration`,
+      baseUrl: `http://127.0.0.1:${envValue('AHA_AGENT_HOOK_PORT')}/orchestration`,
       token,
     };
   }
@@ -67,7 +90,7 @@ function resolveOrchestrationEndpoint() {
 }
 
 function callerIdentity() {
-  return process.env.AHA_WORKER_ID || process.env.AHA_SESSION_ID || process.env.AHA_TERMINAL_ID || '';
+  return envValue('AHA_WORKER_ID') || envValue('AHA_SESSION_ID') || envValue('AHA_TERMINAL_ID') || '';
 }
 
 function postOrchestrationAction(action, payload, activeRequests) {
@@ -90,15 +113,15 @@ function postOrchestrationAction(action, payload, activeRequests) {
     if (endpoint.token) {
       headers['x-aha-agent-hook-token'] = endpoint.token;
     }
-    if (process.env.AHA_WORKER_ID) {
-      headers['x-aha-worker-id'] = process.env.AHA_WORKER_ID;
-      headers['x-aha-worker-token'] = process.env.AHA_WORKER_TOKEN || '';
-    } else if (process.env.AHA_SESSION_ID) {
-      headers['x-aha-session-id'] = process.env.AHA_SESSION_ID;
-      headers['x-aha-session-token'] = process.env.AHA_SESSION_TOKEN || '';
+    if (envValue('AHA_WORKER_ID')) {
+      headers['x-aha-worker-id'] = envValue('AHA_WORKER_ID');
+      headers['x-aha-worker-token'] = envValue('AHA_WORKER_TOKEN');
+    } else if (envValue('AHA_SESSION_ID')) {
+      headers['x-aha-session-id'] = envValue('AHA_SESSION_ID');
+      headers['x-aha-session-token'] = envValue('AHA_SESSION_TOKEN');
     } else {
-      if (process.env.AHA_TERMINAL_ID) headers['x-aha-pty-id'] = process.env.AHA_TERMINAL_ID;
-      if (process.env.AHA_ORCHESTRATION_PANE_TOKEN) headers['x-aha-pane-token'] = process.env.AHA_ORCHESTRATION_PANE_TOKEN;
+      if (envValue('AHA_TERMINAL_ID')) headers['x-aha-pty-id'] = envValue('AHA_TERMINAL_ID');
+      if (envValue('AHA_ORCHESTRATION_PANE_TOKEN')) headers['x-aha-pane-token'] = envValue('AHA_ORCHESTRATION_PANE_TOKEN');
     }
 
     const req = client.request(
