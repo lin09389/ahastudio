@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -31,6 +31,25 @@ test('Codex app-server environment keeps provider variables but drops unrelated 
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
+  }
+});
+
+test('Codex environment forwards custom provider env_key credentials declared in config.toml', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'aha-codex-provider-'));
+  const keys = ['CODEX_HOME', 'CUSTOM_PROVIDER_KEY'];
+  const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  try {
+    process.env.CODEX_HOME = dir;
+    process.env.CUSTOM_PROVIDER_KEY = 'custom-provider-secret';
+    writeFileSync(join(dir, 'config.toml'), '[model_providers.custom]\nenv_key = "CUSTOM_PROVIDER_KEY"\n');
+    const env = mergedCodexSubprocessEnv();
+    assert.equal(env.CUSTOM_PROVIDER_KEY, 'custom-provider-secret');
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    rmSync(dir, { force: true, recursive: true });
   }
 });
 

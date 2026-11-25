@@ -126,9 +126,26 @@ function sanitizedAllowlistedEnv(isAllowed: (name: string) => boolean): NodeJS.P
   return out;
 }
 
+function loadCodexProviderEnvKeys(): ReadonlySet<string> {
+  const codexHome = process.env.CODEX_HOME?.trim() || join(homedir(), '.codex');
+  const path = join(codexHome, 'config.toml');
+  if (!existsSync(path)) return new Set();
+  try {
+    const keys = new Set<string>();
+    const text = readFileSync(path, 'utf8');
+    for (const match of text.matchAll(/^\s*env_key\s*=\s*["']([A-Za-z_][A-Za-z0-9_]*)["']/gm)) {
+      keys.add(match[1]);
+    }
+    return keys;
+  } catch {
+    return new Set();
+  }
+}
+
 const CODEX_ENV_PREFIX_ALLOWLIST: readonly string[] = ['OPENAI_', 'CODEX_', 'XDG_'];
 
-function isCodexEnvAllowed(name: string): boolean {
+function isCodexEnvAllowed(name: string, providerEnvKeys: ReadonlySet<string>): boolean {
+  if (providerEnvKeys.has(name)) return true;
   if (ENV_ALLOWLIST.has(name) || name.toUpperCase() === 'PATH') return true;
   for (const pfx of CODEX_ENV_PREFIX_ALLOWLIST) {
     if (name.startsWith(pfx)) return true;
@@ -138,7 +155,9 @@ function isCodexEnvAllowed(name: string): boolean {
 
 /** Environment for the Codex app-server: provider credentials yes, unrelated ambient secrets no. */
 export function mergedCodexSubprocessEnv(): NodeJS.ProcessEnv {
-  return sanitizedAllowlistedEnv(isCodexEnvAllowed);
+  // Custom Codex providers name their credential variable explicitly in config.toml;
+  // forward only those declared keys rather than reopening the whole process environment.
+  return sanitizedAllowlistedEnv((name) => isCodexEnvAllowed(name, loadCodexProviderEnvKeys()));
 }
 
 export function mergedSubprocessEnv(): NodeJS.ProcessEnv {
