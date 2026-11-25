@@ -1,8 +1,10 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { augmentedPath, resolveBinaryFromPath } from '../bin-resolve.js';
+import { mergedCodexSubprocessEnv } from '../settings-loader.js';
 import type {
   AgentGoalStatus, AgentOutputSlice, AgentSessionDriver, AgentSessionEvents, AgentSessionGoal, AgentSessionPolicy,
   AgentTurnAttachment, TurnDelivery,
@@ -305,6 +307,19 @@ export function codexMcpConfigArgs(
   ];
 }
 
+export function writeMcpCredentialFile(env: Record<string, string>, credentialDir?: string): string {
+  const base = credentialDir ?? join(tmpdir(), 'ahastudio-mcp-credentials');
+  mkdirSync(base, { recursive: true, mode: 0o700 });
+  if (process.platform !== 'win32') chmodSync(base, 0o700);
+  const owner = env.AHA_WORKER_ID || env.AHA_SESSION_ID || env.AHA_TERMINAL_ID || `${process.pid}-${Date.now()}`;
+  const file = join(base, `${owner.replace(/[^a-zA-Z0-9_.-]/g, '_')}.json`);
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(env, null, 2), { encoding: 'utf8', mode: 0o600 });
+  if (process.platform !== 'win32') chmodSync(tmp, 0o600);
+  renameSync(tmp, file);
+  return file;
+}
+
 export function launchCodexPilot(options: {
   cwd: string;
   /**
@@ -312,7 +327,11 @@ export function launchCodexPilot(options: {
    * without it. `requiredTool` must be listed before the thread is usable (default report_done) and
    * `approvedTools` run without a Codex approval prompt (default report_done, read_board, ask_coordinator, and post_message).
    */
-  mcp?: { serverPath: string; env: Record<string, string>; requiredTool?: string; approvedTools?: readonly string[] };
+  mcp?: {
+    serverPath: string; env: Record<string, string>; requiredTool?: string; approvedTools?: readonly string[];
+    /** Private directory used for the per-process credential file instead of a temporary directory. */
+    credentialDir?: string;
+  };
   events: AgentSessionEvents;
 }): CodexAppServerPilot {
   const codex = resolveBinaryFromPath('codex');
@@ -322,11 +341,15 @@ export function launchCodexPilot(options: {
   const entry = join(dirname(codex), 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
   if (wrapper && !existsSync(entry)) throw new Error('Codex npm entry point was not found');
 
-  const args = ['app-server', '--stdio', ...(options.mcp ? codexMcpConfigArgs(node, options.mcp) : [])];
-  const env: NodeJS.ProcessEnv = { ...process.env, PATH: augmentedPath() };
-  for (const key of Object.keys(env)) {
-    if (key.toUpperCase().startsWith('AHA_')) delete env[key];
+  let credentialFile: string | null = null;
+  let mcp = options.mcp;
+  if (mcp) {
+    credentialFile = writeMcpCredentialFile(mcp.env, mcp.credentialDir);
+    // Only the file path belongs in argv; scoped tokens stay inside a 0600 file.
+    mcp = { ...mcp, env: { AHA_CREDENTIAL_FILE: credentialFile } };
   }
+  const args = ['app-server', '--stdio', ...(mcp ? codexMcpConfigArgs(node, mcp) : [])];
+  const env: NodeJS.ProcessEnv = { ...mergedCodexSubprocessEnv(), PATH: augmentedPath() };
   const executable = wrapper ? node : codex;
   const argv = wrapper ? [entry, ...args] : args;
   const child = process.platform === 'win32'
@@ -334,7 +357,8 @@ export function launchCodexPilot(options: {
     : spawn(executable, argv, { cwd: options.cwd, env, windowsHide: true, stdio: 'pipe' });
   return new CodexAppServerPilot(child, options.events, 30_000, [
     options.mcp?.env.AHA_WORKER_TOKEN, options.mcp?.env.AHA_SESSION_TOKEN, options.mcp?.env.AHA_AGENT_HOOK_TOKEN,
-  ].filter((value): value is string => Boolean(value)), options.mcp ? options.mcp.requiredTool ?? 'report_done' : null);
+  ].filter((value): value is string => Boolean(value)), options.mcp ? options.mcp.requiredTool ?? 'report_done' : null,
+    credentialFile ? () => rmSync(credentialFile, { force: true }) : undefined);
 }
 
 export class CodexAppServerPilot implements AgentSessionDriver {
@@ -370,13 +394,19 @@ export class CodexAppServerPilot implements AgentSessionDriver {
     private readonly secrets: readonly string[] = [],
     /** Aha MCP tool the thread must expose before it is usable; null for sessions without Aha MCP. */
     private readonly requiredMcpTool: string | null = 'report_done',
+    private readonly cleanup?: () => void,
   ) {
+    const cleanupOnce = () => {
+      try { this.cleanup?.(); } catch { /* Best-effort secret file cleanup. */ }
+    };
     this.childClosed = new Promise((resolve) => {
       child.once('close', (code, signal) => {
+        cleanupOnce();
         resolve();
         this.transportLost(`Codex app-server exited (${code ?? signal ?? 'unknown'})`, code);
       });
       child.once('error', (error) => {
+        cleanupOnce();
         resolve();
         this.transportLost(`Codex app-server process error: ${error.message}`);
       });

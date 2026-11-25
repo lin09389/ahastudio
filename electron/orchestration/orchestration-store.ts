@@ -184,6 +184,8 @@ export class OrchestrationStore {
       ? new AtomicSnapshotWriter(options.resolveFile, {
           skipUnchanged: true,
           backupSuffix: '.bak',
+          fileMode: 0o600,
+          directoryMode: 0o700,
         })
       : null;
   }

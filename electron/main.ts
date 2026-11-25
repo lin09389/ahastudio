@@ -381,7 +381,10 @@ app.whenReady().then(async () => {
       launch: (workerId, cwd, events) => {
         const mcpServerPath = resolveActiveMcpServerPath();
         if (!agentHookServer || !mcpServerPath) throw new Error('Aha MCP Server is unavailable');
-        return launchCodexPilot({ cwd, events, mcp: { serverPath: mcpServerPath, env: agentHookServer.envForWorker(workerId) } });
+        return launchCodexPilot({ cwd, events, mcp: {
+          serverPath: mcpServerPath, env: agentHookServer.envForWorker(workerId),
+          credentialDir: join(app.getPath('userData'), 'mcp-credentials'),
+        } });
       },
     },
     closeWorkerPty: (ptyId) => shellPtyCtrl.closePty(ptyId),
@@ -534,6 +537,7 @@ app.whenReady().then(async () => {
         cwd, events,
         mcp: {
           serverPath: mcpServerPath, env: agentHookServer.envForSession(sessionId),
+          credentialDir: join(app.getPath('userData'), 'mcp-credentials'),
           requiredTool: 'delegate_task', approvedTools: coordinatorApprovedMcpTools(policy),
         },
       });

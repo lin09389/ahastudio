@@ -133,7 +133,7 @@ export class AgentSessionManager {
 
   constructor(private readonly deps: AgentSessionManagerDependencies) {
     this.now = deps.now ?? Date.now;
-    this.writer = deps.storageFile ? new AtomicSnapshotWriter(deps.storageFile, { skipUnchanged: true }) : null;
+    this.writer = deps.storageFile ? new AtomicSnapshotWriter(deps.storageFile, { skipUnchanged: true, fileMode: 0o600, directoryMode: 0o700 }) : null;
     this.load();
   }
 

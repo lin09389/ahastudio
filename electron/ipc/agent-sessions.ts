@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { z } from 'zod';
 import type { AgentTurnAttachment } from '../orchestration/agent-session-driver.js';
@@ -19,6 +19,17 @@ const IMAGE_EXTENSIONS = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_ATTACHMENTS = 20;
+
+
+function privateDirectory(path: string): void {
+  mkdirSync(path, { recursive: true, mode: 0o700 });
+  if (process.platform !== 'win32') chmodSync(path, 0o700);
+}
+
+function writePrivateFile(path: string, bytes: Buffer): void {
+  writeFileSync(path, bytes, { mode: 0o600 });
+  if (process.platform !== 'win32') chmodSync(path, 0o600);
+}
 
 const attachmentSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('skill'), name: z.string().trim().min(1).max(200), path: absolutePath }).strict(),
@@ -134,6 +145,7 @@ export function registerAgentSessionsIpc(
   // Images of sessions that no longer exist (closed, or dropped from history) are removed at start.
   if (options.attachmentsDir) {
     try {
+      privateDirectory(options.attachmentsDir());
       const known = new Set(manager.list().map((session) => session.id));
       for (const entry of readdirSync(options.attachmentsDir(), { withFileTypes: true })) {
         if (entry.isDirectory() && !known.has(entry.name)) {
@@ -204,9 +216,9 @@ export function registerAgentSessionsIpc(
     const bytes = Buffer.from(input.data, 'base64');
     if (!bytes.length || bytes.length > MAX_IMAGE_BYTES) throw new Error('图片不能超过 10MB');
     const dir = imagesDir(input.id);
-    mkdirSync(dir, { recursive: true });
+    privateDirectory(dir);
     const path = join(dir, `${randomUUID()}${IMAGE_EXTENSIONS[input.mime]}`);
-    writeFileSync(path, bytes);
+    writePrivateFile(path, bytes);
     return { attachment: { type: 'localImage', path, name: basename(input.name) } };
   });
   // Any other file keeps its own name (inside a fresh folder), since the agent reads it by path.
@@ -216,10 +228,10 @@ export function registerAgentSessionsIpc(
     if (!bytes.length) throw new Error('文件是空的或无法读取');
     if (bytes.length > MAX_FILE_BYTES) throw new Error('文件不能超过 20MB');
     const dir = join(imagesDir(input.id), randomUUID());
-    mkdirSync(dir, { recursive: true });
+    privateDirectory(dir);
     const name = safeFileName(input.name);
     const path = join(dir, name);
-    writeFileSync(path, bytes);
+    writePrivateFile(path, bytes);
     return { attachment: { type: 'file', path, name } };
   });
   secure('interrupt', targetSchema, async (input) => ({ interrupted: await manager.interrupt(input.id) }));

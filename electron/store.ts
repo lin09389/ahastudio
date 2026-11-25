@@ -1,5 +1,6 @@
 import { app, safeStorage } from 'electron';
 import {
+  chmodSync,
   constants,
   copyFileSync,
   existsSync,
@@ -209,9 +210,11 @@ function encodeSettingsForDisk(settings: Settings): Settings {
 
 function writeSettingsNow(settings: Settings): void {
   const file = settingsFilePath();
-  mkdirSync(dirname(file), { recursive: true });
+  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+  if (process.platform !== 'win32') chmodSync(dirname(file), 0o700);
   const tmp = `${file}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(encodeSettingsForDisk(settings), null, 2), 'utf8');
+  writeFileSync(tmp, JSON.stringify(encodeSettingsForDisk(settings), null, 2), { encoding: 'utf8', mode: 0o600 });
+  if (process.platform !== 'win32') chmodSync(tmp, 0o600);
   renameSync(tmp, file);
 }
 
@@ -220,6 +223,7 @@ function backupV1Settings(): void {
   const backup = `${file}.v1.bak`;
   if (!existsSync(file) || existsSync(backup)) return;
   copyFileSync(file, backup, constants.COPYFILE_EXCL);
+  if (process.platform !== 'win32') chmodSync(backup, 0o600);
 }
 
 function scheduleSettingsWrite(): void {
@@ -234,6 +238,13 @@ function scheduleSettingsWrite(): void {
 export function getSettings(): Settings {
   if (cachedSettings) return cachedSettings;
   const file = settingsFilePath();
+  if (process.platform !== 'win32') {
+    try {
+      mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+      chmodSync(dirname(file), 0o700);
+      if (existsSync(file)) chmodSync(file, 0o600);
+    } catch {}
+  }
   if (!existsSync(file)) {
     cachedSettings = { schemaVersion: 2 };
     return cachedSettings;

@@ -1,7 +1,7 @@
 // Ported/adapted from Orca (https://github.com/stablyai/orca).
 // Copyright (c) 2026 Lovecast Inc. — MIT License. See THIRD_PARTY_NOTICES.md.
 
-import { chmodSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { chmod, mkdir, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import {
@@ -41,6 +41,18 @@ export class AtomicSnapshotWriter {
     this.staleTempCleanup = removeStaleDurableWriteTempFiles(resolveFile(), {
       minimumAgeMs: STALE_WRITE_TEMP_AGE_MS
     })
+    this.applyPrivatePermissionsToExistingFiles(resolveFile())
+  }
+
+  private applyPrivatePermissionsToExistingFiles(file: string): void {
+    if (this.options.fileMode === undefined || process.platform === 'win32') return
+    const paths = [file, ...(this.options.backupSuffix ? [`${file}${this.options.backupSuffix}`] : [])]
+    for (const path of paths) {
+      if (!existsSync(path)) continue
+      try {
+        chmodSync(path, this.options.fileMode)
+      } catch {}
+    }
   }
 
   write(serialize: () => string): Promise<void> {
