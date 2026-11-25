@@ -144,8 +144,8 @@ export function registerAgentSessionsIpc(
 
   // Images of sessions that no longer exist (closed, or dropped from history) are removed at start.
   if (options.attachmentsDir) {
-    privateDirectory(options.attachmentsDir());
     try {
+      privateDirectory(options.attachmentsDir());
       const known = new Set(manager.list().map((session) => session.id));
       for (const entry of readdirSync(options.attachmentsDir(), { withFileTypes: true })) {
         if (entry.isDirectory() && !known.has(entry.name)) {
